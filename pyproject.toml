@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gaussutils"
+version = "0.1.0"
+description = "A library of pipeline tools and Dockerfiles to build and run tools to create 3-D Gaussian Splat (3DGS) models"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+    "torch==2.8.0",
+    "fvdb-core==0.3.0+pt28.cu128",
+    "fvdb-reality-capture",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Custom index sources for CUDA wheels
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "fvdb"
+url = "https://d36m13axqqhiit.cloudfront.net/simple"
+explicit = true
