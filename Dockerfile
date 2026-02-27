@@ -1,5 +1,4 @@
 FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
-
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install Python and minimal runtime dependencies
@@ -17,3 +16,7 @@ RUN pip install \
     torch==2.8.0 \
     --extra-index-url="https://d36m13axqqhiit.cloudfront.net/simple" \
     --extra-index-url="https://download.pytorch.org/whl/cu128"
+
+# Install gaussutils
+COPY . /gaussutils
+RUN pip install /gaussutils
