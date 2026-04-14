@@ -1,27 +1,72 @@
 import logging
 import math
-from typing import Union
 from pathlib import Path
+from typing import Optional, Union
 
-import torch
 import fvdb
 import fvdb_reality_capture as frc
+import numpy as np
 import point_cloud_utils as pcu
+import torch
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 
 logger = logging.getLogger(__name__)
 
 
+def train_gaussian_splat(
+    scene: frc.sfm_scene.SfmScene,
+    output_dir: Union[str, Path],
+) -> tuple[fvdb.GaussianSplat3d, frc.radiance_fields.GaussianSplatReconstruction]:
+    """Train a Gaussian splat radiance field from an SfmScene."""
+    logger.info("Initializing Gaussian splat reconstruction...")
+    output_dir = Path(output_dir)
+    writer_dir = output_dir / "info"
+    writer_dir.mkdir(parents=True, exist_ok=True)
+    writer = frc.radiance_fields.GaussianSplatReconstructionWriter(
+        run_name=None,
+        save_path=writer_dir,
+        config=frc.radiance_fields.GaussianSplatReconstructionWriterConfig(
+            save_checkpoints=True, save_plys=True, save_metrics=False
+        ),
+    )
+
+    runner = frc.radiance_fields.GaussianSplatReconstruction.from_sfm_scene(
+        scene, writer=writer
+    )
+    logger.info("Starting optimization (this may take a while)...")
+    runner.optimize()
+
+    model = runner.model
+    logger.info(
+        f"Training complete: {model.num_gaussians} Gaussians, " f"device={model.device}"
+    )
+    return model, runner
+
+
 def load_checkpoint(
     checkpoint_path: Union[str, Path],
-) -> tuple[fvdb.GaussianSplat3d, frc.radiance_fields.GaussianSplatReconstruction]:
-    """Load a Gaussian splat model from a checkpoint file."""
+) -> tuple[
+    fvdb.GaussianSplat3d, Optional[frc.radiance_fields.GaussianSplatReconstruction]
+]:
+    """Load a Gaussian splat model from a checkpoint (.pt) or PLY (.ply) file.
+
+    When loading from PLY, no runner is available so the second return value is None.
+    """
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.is_file():
         raise ValueError(f"Input checkpoint file does not exist: {checkpoint_path}")
 
     logger.info(f"Loading checkpoint from {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location="cuda", weights_only=False)
 
+    if checkpoint_path.suffix.lower() == ".ply":
+        model, metadata = fvdb.GaussianSplat3d.from_ply(
+            str(checkpoint_path), device="cuda"
+        )
+        logger.info(f"Loaded PLY: {model.num_gaussians:,} gaussians")
+        return model, None
+
+    checkpoint = torch.load(checkpoint_path, map_location="cuda", weights_only=False)
     runner = frc.radiance_fields.GaussianSplatReconstruction.from_state_dict(
         state_dict=checkpoint
     )
@@ -32,7 +77,7 @@ def load_checkpoint(
 def save_model_ply(
     output_model: Union[str, Path],
     model: fvdb.GaussianSplat3d,
-    runner: frc.radiance_fields.GaussianSplatReconstruction,
+    runner: Optional[frc.radiance_fields.GaussianSplatReconstruction] = None,
 ) -> None:
     """Save the trained model to disk as a PLY."""
 
@@ -41,8 +86,8 @@ def save_model_ply(
     if output_model.suffix.lower() != ".ply":
         raise ValueError("invalid file format.  The output file must be a PLY.")
 
-    # Save Gaussian splat as PLY
-    model.save_ply(str(output_model), metadata=runner.reconstruction_metadata)
+    metadata = runner.reconstruction_metadata if runner is not None else None
+    model.save_ply(str(output_model), metadata=metadata)
     logger.info(f"Saved Gaussian splat PLY to {output_model}")
 
 
@@ -281,4 +326,347 @@ def auto_filter_splats(
         f"({before - after:,} removed, {100 * (before - after) / before:.1f}%)"
     )
 
+    return model
+
+
+def filter_splats_by_cluster(
+    model: fvdb.GaussianSplat3d,
+    k: int = 20,
+    distance_multiplier: float = 2.0,
+    min_cluster_fraction: float = 0.005,
+) -> fvdb.GaussianSplat3d:
+    """Remove spatially isolated clusters using connected components on a KNN graph.
+
+    Builds a KNN graph over gaussian means, thresholds edges by an adaptive
+    distance cutoff (median nearest-neighbor distance + multiplier * MAD),
+    then finds connected components. Only clusters containing at least
+    min_cluster_fraction of total gaussians are retained.
+
+    Args:
+        model: The GaussianSplat3d model to filter.
+        k: Neighbors per gaussian in the KNN graph. Default 20.
+        distance_multiplier: Edge threshold = median_nn_dist + multiplier * MAD.
+                             Lower values produce more disconnected components. Default 2.0.
+        min_cluster_fraction: Minimum cluster size as fraction of total gaussians.
+                              Clusters below this are removed. Default 0.005 (0.5%).
+
+    Returns:
+        filtered_model: Model with only significant clusters retained.
+    """
+    before = model.num_gaussians
+    if before <= 1:
+        return model
+
+    logger.info(
+        f"Cluster filter: {before:,} gaussians, k={k}, "
+        f"distance_multiplier={distance_multiplier}, min_fraction={min_cluster_fraction}"
+    )
+
+    positions = model.means.cpu().float().detach().numpy()
+    n = len(positions)
+
+    # KNN graph (k+1 because pcu includes self at index 0)
+    dists, indices = pcu.k_nearest_neighbors(positions, positions, k + 1)
+    dists = dists[:, 1:]
+    indices = indices[:, 1:]
+
+    # Adaptive distance threshold: median + multiplier * MAD of nearest-neighbor distances
+    nn1_dists = dists[:, 0]
+    median_dist = np.median(nn1_dists)
+    mad = np.median(np.abs(nn1_dists - median_dist))
+    threshold = median_dist + distance_multiplier * max(mad, 1e-8)
+    logger.info(
+        f"Edge threshold: {threshold:.6f} "
+        f"(median_nn={median_dist:.6f}, MAD={mad:.6f})"
+    )
+
+    # Build sparse adjacency matrix (vectorized)
+    row_idx = np.repeat(np.arange(n), k)
+    col_idx = indices.ravel()
+    dist_flat = dists.ravel()
+    edge_mask = dist_flat < threshold
+    graph = csr_matrix(
+        (
+            np.ones(edge_mask.sum(), dtype=np.float32),
+            (row_idx[edge_mask], col_idx[edge_mask]),
+        ),
+        shape=(n, n),
+    )
+
+    n_components, labels = connected_components(graph, directed=False)
+
+    # Keep clusters above size threshold
+    min_size = max(int(n * min_cluster_fraction), 1)
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    keep_labels = set(unique_labels[counts >= min_size])
+    keep_mask = np.isin(labels, list(keep_labels))
+
+    logger.info(
+        f"Found {n_components} components, keeping {len(keep_labels)} "
+        f"with >= {min_size} gaussians"
+    )
+
+    model = model[torch.from_numpy(keep_mask).to(model.device)]
+    after = model.num_gaussians
+    logger.info(
+        f"Cluster filter complete: {after:,} remaining "
+        f"({before - after:,} removed, {100 * (before - after) / before:.1f}%)"
+    )
+    return model
+
+
+def filter_splats_by_camera_frustum(
+    model: fvdb.GaussianSplat3d,
+    scene: frc.sfm_scene.SfmScene,
+    min_visible_views: int = 2,
+) -> fvdb.GaussianSplat3d:
+    """Remove splats not visible in at least min_visible_views training cameras.
+
+    Projects gaussian means into each training camera and checks whether
+    they fall within the image bounds and in front of the camera. Splats
+    not visible in enough views are removed.
+
+    Args:
+        model: The GaussianSplat3d model to filter.
+        scene: SfmScene providing camera poses and intrinsics.
+        min_visible_views: Minimum cameras a splat must be visible in. Default 2.
+
+    Returns:
+        filtered_model: Model with only multi-view-visible splats.
+    """
+    before = model.num_gaussians
+    if before == 0:
+        return model
+
+    cam2world = torch.as_tensor(
+        scene.camera_to_world_matrices, dtype=torch.float32, device=model.device
+    )
+    proj = torch.as_tensor(
+        scene.projection_matrices, dtype=torch.float32, device=model.device
+    )
+    img_sizes = torch.as_tensor(
+        scene.image_sizes, dtype=torch.float32, device=model.device
+    )
+
+    n_cams = cam2world.shape[0]
+    if n_cams == 0:
+        logger.warning("No cameras in scene, skipping frustum filter")
+        return model
+
+    min_visible_views = min(min_visible_views, n_cams)
+    logger.info(
+        f"Camera frustum filter: {before:,} gaussians, "
+        f"{n_cams} cameras, min_visible_views={min_visible_views}"
+    )
+
+    world2cam = torch.linalg.inv(cam2world)  # (N_cams, 4, 4)
+    means = model.means.detach()  # (N_splats, 3)
+    ones = torch.ones(means.shape[0], 1, device=means.device, dtype=means.dtype)
+    means_h = torch.cat([means, ones], dim=-1)  # (N_splats, 4)
+
+    visible_count = torch.zeros(means.shape[0], device=means.device, dtype=torch.int32)
+
+    for i in range(n_cams):
+        # Transform to camera space
+        cam_pts = (world2cam[i] @ means_h.T).T[:, :3]  # (N_splats, 3)
+
+        in_front = cam_pts[:, 2] > 0
+
+        # Project to pixel coordinates: K @ p_cam
+        proj_pts = (proj[i] @ cam_pts.T).T
+        z = proj_pts[:, 2:3].clamp(min=1e-8)
+        uv = proj_pts[:, :2] / z
+
+        w, h = img_sizes[i, 0], img_sizes[i, 1]
+        in_bounds = (uv[:, 0] >= 0) & (uv[:, 0] < w) & (uv[:, 1] >= 0) & (uv[:, 1] < h)
+
+        visible_count += (in_front & in_bounds).int()
+
+    mask = visible_count >= min_visible_views
+    model = model[mask]
+
+    after = model.num_gaussians
+    logger.info(
+        f"Camera frustum filter complete: {after:,} remaining "
+        f"({before - after:,} removed, {100 * (before - after) / before:.1f}%)"
+    )
+    return model
+
+
+def filter_splats_by_anisotropy(
+    model: fvdb.GaussianSplat3d,
+    max_elongation: float = 8.0,
+) -> fvdb.GaussianSplat3d:
+    """Remove needle-like splats via scale anisotropy.
+
+    Legitimate surface splats tend to be flat discs (s_min small, s_mid ~ s_max),
+    whereas a common floater class after 3DGS training is needle-shaped: one
+    axis much larger than the other two. This filter removes any gaussian
+    whose largest-to-middle axis ratio exceeds ``max_elongation``.
+
+    Args:
+        model: The GaussianSplat3d model to filter.
+        max_elongation: Reject splats where ``s_max / s_mid > max_elongation``.
+                        Default 8.0 — a plate with 8× aspect is extreme.
+
+    Returns:
+        filtered_model: Model with needle-shaped splats removed.
+    """
+    before = model.num_gaussians
+    if before == 0:
+        return model
+
+    scales = model.scales.detach()  # (N, 3)
+    sorted_scales, _ = torch.sort(scales, dim=-1, descending=True)
+    s_max = sorted_scales[:, 0].clamp(min=1e-8)
+    s_mid = sorted_scales[:, 1].clamp(min=1e-8)
+    elongation = s_max / s_mid
+
+    mask = elongation <= max_elongation
+    model = model[mask]
+
+    after = model.num_gaussians
+    logger.info(
+        f"Anisotropy filter complete: {after:,} remaining "
+        f"({before - after:,} removed, {100 * (before - after) / before:.1f}%, "
+        f"max_elongation={max_elongation})"
+    )
+    return model
+
+
+def filter_splats_for_scene(
+    model: fvdb.GaussianSplat3d,
+    scale_iqr_multiplier: float = 4.0,
+    opacity_floor: float = 0.002,
+    spatial_percentile: float = 0.99,
+    decimate: int = 4,
+    knn_k: int = 10,
+    knn_std_multiplier: float = 3.0,
+    cluster_k: int = 20,
+    cluster_distance_multiplier: float = 4.0,
+    min_cluster_fraction: float = 0.002,
+    max_elongation: float = 8.0,
+) -> fvdb.GaussianSplat3d:
+    """Conservative filtering pipeline for accurate scene representation.
+
+    Applies adaptive statistical filters (scale IQR, opacity floor, spatial
+    percentile, KNN density), a shape-based needle rejection, and
+    connected-component cluster analysis to remove floaters while preserving
+    as much legitimate scene content as possible.
+
+    Use this when the goal is a visually accurate splat model with minimal
+    manual cleanup.
+
+    Args:
+        model: The GaussianSplat3d model to filter.
+        scale_iqr_multiplier: IQR multiplier for scale outlier bounds. Default 4.0.
+        opacity_floor: Absolute minimum opacity to retain. Default 0.002.
+        spatial_percentile: Fraction of scene extent to keep. Default 0.99.
+        decimate: Subsampling factor for statistics. Default 4.
+        knn_k: Neighbors for KNN density filter. Default 10.
+        knn_std_multiplier: KNN outlier threshold in std devs. Default 3.0.
+        cluster_k: Neighbors for cluster graph. Default 20.
+        cluster_distance_multiplier: Edge threshold multiplier for clustering. Default 4.0.
+        min_cluster_fraction: Minimum cluster size as fraction of total. Default 0.002.
+        max_elongation: Reject splats with ``s_max / s_mid > max_elongation``. Default 8.0.
+
+    Returns:
+        filtered_model: Cleaned model with floaters removed.
+    """
+    before = model.num_gaussians
+    logger.info(f"filter_splats_for_scene: starting with {before:,} gaussians")
+
+    model = auto_filter_splats(
+        model,
+        scale_iqr_multiplier=scale_iqr_multiplier,
+        opacity_floor=opacity_floor,
+        spatial_percentile=spatial_percentile,
+        decimate=decimate,
+        knn_k=knn_k,
+        knn_std_multiplier=knn_std_multiplier,
+    )
+
+    model = filter_splats_by_anisotropy(model, max_elongation=max_elongation)
+
+    model = filter_splats_by_cluster(
+        model,
+        k=cluster_k,
+        distance_multiplier=cluster_distance_multiplier,
+        min_cluster_fraction=min_cluster_fraction,
+    )
+
+    after = model.num_gaussians
+    logger.info(
+        f"filter_splats_for_scene complete: {after:,} remaining "
+        f"({before - after:,} removed, {100 * (before - after) / before:.1f}%)"
+    )
+    return model
+
+
+def filter_splats_for_mesh(
+    model: fvdb.GaussianSplat3d,
+    scene: Optional[frc.sfm_scene.SfmScene] = None,
+    scale_iqr_multiplier: float = 3.0,
+    opacity_floor: float = 0.01,
+    spatial_percentile: float = 0.98,
+    decimate: int = 4,
+    knn_k: int = 10,
+    knn_std_multiplier: float = 2.0,
+    min_visible_views: int = 2,
+) -> fvdb.GaussianSplat3d:
+    """Conservative filtering pipeline for mesh extraction.
+
+    Removes obvious floaters and far-away outliers while preserving the
+    dense surface coverage (including low-opacity splats) that DLNR stereo
+    depth estimation needs to render coherent image pairs. Cluster-based
+    filtering is intentionally omitted: 3DGS surfaces often fragment into
+    many weakly-connected KNN components, and dropping small components
+    strips the splats that carry fine surface detail.
+
+    Args:
+        model: The GaussianSplat3d model to filter.
+        scene: Optional SfmScene for camera frustum culling. When provided,
+               splats not visible in min_visible_views cameras are removed.
+        scale_iqr_multiplier: IQR multiplier for scale outlier bounds. Default 3.0.
+        opacity_floor: Minimum opacity to retain. Default 0.01 — low enough to
+                       keep semi-transparent splats that contribute to rendered
+                       alpha compositing (critical for DLNR stereo).
+        spatial_percentile: Spatial extent to keep. Default 0.98.
+        decimate: Subsampling factor for statistics. Default 4.
+        knn_k: Neighbors for KNN density filter. Default 10.
+        knn_std_multiplier: KNN threshold in std devs. Default 2.0.
+        min_visible_views: Minimum cameras a splat must project into. Default 2.
+
+    Returns:
+        filtered_model: Cleaned model ready for meshing, preserving surface coverage.
+    """
+    before = model.num_gaussians
+    logger.info(f"filter_splats_for_mesh: starting with {before:,} gaussians")
+
+    # Adaptive statistical filters (scale IQR, opacity floor, spatial percentile,
+    # single KNN density pass). Conservative defaults — surface coverage matters
+    # more than aesthetic cleanliness for DLNR-based meshing.
+    model = auto_filter_splats(
+        model,
+        scale_iqr_multiplier=scale_iqr_multiplier,
+        opacity_floor=opacity_floor,
+        spatial_percentile=spatial_percentile,
+        decimate=decimate,
+        knn_k=knn_k,
+        knn_std_multiplier=knn_std_multiplier,
+    )
+
+    # Camera frustum culling removes splats no camera can see — safe for meshing.
+    if scene is not None:
+        model = filter_splats_by_camera_frustum(
+            model, scene, min_visible_views=min_visible_views
+        )
+    else:
+        logger.info("No scene provided, skipping camera frustum filter")
+
+    after = model.num_gaussians
+    logger.info(
+        f"filter_splats_for_mesh complete: {after:,} remaining "
+        f"({before - after:,} removed, {100 * (before - after) / before:.1f}%)"
+    )
     return model

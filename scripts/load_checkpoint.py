@@ -1,8 +1,8 @@
 import argparse
 import logging
 from pathlib import Path
-from gaussutils.splat_utils import load_checkpoint, auto_filter_splats, save_model_ply
 
+from gaussutils.splat_utils import auto_filter_splats, load_checkpoint, save_model_ply
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument(
         "--spatial-percentile",
         type=float,
-        default=0.98,
+        default=0.99,
         help="Fraction of scene extent to retain spatially. Removes only extreme floaters (default: 0.99).",
     )
     parser.add_argument(

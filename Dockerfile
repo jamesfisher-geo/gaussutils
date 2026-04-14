@@ -12,10 +12,10 @@ RUN apt-get update && \
 # Install fvdb-core + fvdb-reality-capture from pre-built wheels (PyTorch 2.8.0 + CUDA 12.8)
 RUN pip install \
     fvdb-reality-capture \
-    fvdb-core==0.3.0+pt28.cu128 \
-    torch==2.8.0 \
+    fvdb-core==0.4.0+pt210.cu130 \
+    torch==2.10.0 \
     --extra-index-url="https://d36m13axqqhiit.cloudfront.net/simple" \
-    --extra-index-url="https://download.pytorch.org/whl/cu128"
+    --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Install gaussutils
 COPY . /gaussutils

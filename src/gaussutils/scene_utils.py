@@ -1,6 +1,6 @@
 import logging
-from typing import Union
 from pathlib import Path
+from typing import Literal, Optional, Union
 
 import fvdb_reality_capture as frc
 import fvdb_reality_capture.transforms as transforms
@@ -8,21 +8,31 @@ import fvdb_reality_capture.transforms as transforms
 logger = logging.getLogger(__name__)
 
 
-def load_scene(dataset_path: Union[str, Path]) -> frc.sfm_scene.SfmScene:
+def load_scene(
+    dataset_path: Union[str, Path],
+    normalization_type: Optional[Literal["pca", "ecef2enu"]] = None,
+) -> frc.sfm_scene.SfmScene:
     """Load a COLMAP dataset and apply cleanup transforms."""
 
     logger.info(f"Loading COLMAP dataset from {dataset_path}")
-    sfm_scene = frc.sfm_scene.SfmScene.from_colmap(str(dataset_path))
+    scene = frc.sfm_scene.SfmScene.from_colmap(str(dataset_path))
+    if normalization_type:
+        logger.info(f"Normalizing scene coordinates using '{normalization_type}'")
+        normalization_transform = transforms.Compose(
+            transforms.NormalizeScene(normalization_type=normalization_type),
+        )
+        scene = normalization_transform(scene)
+
     logger.info(
-        f"Loaded scene: {len(sfm_scene.images)} images, "
-        f"{len(sfm_scene.points)} points, "
-        f"{len(sfm_scene.cameras)} camera(s)"
+        f"Loaded scene: {len(scene.images)} images, "
+        f"{len(scene.points)} points, "
+        f"{len(scene.cameras)} camera(s)"
     )
 
-    return sfm_scene
+    return scene
 
 
-def clean_scene(
+def preprocess_scene(
     scene: frc.sfm_scene.SfmScene,
     downsample: int,
     percentile_min: float = 3.0,
@@ -37,7 +47,6 @@ def clean_scene(
             image_type="jpg",
             rescaled_jpeg_quality=95,
         ),
-        transforms.NormalizeScene(normalization_type="pca"),
         transforms.PercentileFilterPoints(
             percentile_min=percentile_min,
             percentile_max=percentile_max,
