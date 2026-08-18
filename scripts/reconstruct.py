@@ -90,7 +90,7 @@ def main():
         raise ValueError(f"Dataset path does not exist: {dataset_path}")
 
     if not args.output_dir:
-        output_dir = dataset_path / "output"
+        output_dir = dataset_path / "3dgs"
     else:
         output_dir = Path(args.output_dir)
     logger.info(f"Setting output directory: {output_dir}")
@@ -131,7 +131,7 @@ def main():
     trainer.filter_model()
     trainer.save_ply()
     trainer.save_usdz()
-    trainer.save_georef()  # no-op unless --georeferenced was set
+    trainer.save_georef()
 
     logger.info(f"Pipeline complete. Outputs saved to {output_dir}")
 

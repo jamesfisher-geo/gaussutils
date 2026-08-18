@@ -45,3 +45,11 @@ Run the Docker image and exec into the command line. Mount directories for your 
 ```bash
 docker run --gpus all -p 8080:8080 -v <path to data>:/data -v <path to code>:/code -it gaussutils
 ```
+
+## How to use
+
+### Train a Gaussian Splat
+
+```bash
+python3 main.py --dataset-path <COLMAP INPUT>
+```

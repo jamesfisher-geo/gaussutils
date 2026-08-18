@@ -28,6 +28,10 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
 # Custom index sources for CUDA wheels
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
