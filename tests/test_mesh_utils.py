@@ -13,7 +13,9 @@ def _fake_trainer(scene_set=True, model_set=True):
     model/scene so extract_mesh's argument-passing can be inspected."""
     trainer = MagicMock(name="GaussianSplatTrainer")
     trainer.scene = make_fake_scene(num_cameras=2) if scene_set else None
-    trainer.model = FakeGaussianSplat3d(torch.zeros(3, 3), torch.ones(3, 3)) if model_set else None
+    trainer.model = (
+        FakeGaussianSplat3d(torch.zeros(3, 3), torch.ones(3, 3)) if model_set else None
+    )
 
     def _require_scene():
         if not trainer.scene:
@@ -36,11 +38,17 @@ def test_extract_mesh_requires_scene_and_model(frc_mock):
 
 def test_extract_mesh_uses_dlnr_when_requested(frc_mock):
     gs = _fake_trainer()
-    expected = (torch.zeros(2, 3), torch.zeros(1, 3, dtype=torch.long), torch.zeros(2, 3))
+    expected = (
+        torch.zeros(2, 3),
+        torch.zeros(1, 3, dtype=torch.long),
+        torch.zeros(2, 3),
+    )
     frc_mock.tools.mesh_from_splats_dlnr.return_value = expected
     frc_mock.tools.mesh_from_splats.reset_mock()
 
-    result = mesh_utils.extract_mesh(gs, truncation_margin=0.5, use_dlnr=True, num_workers=2)
+    result = mesh_utils.extract_mesh(
+        gs, truncation_margin=0.5, use_dlnr=True, num_workers=2
+    )
 
     frc_mock.tools.mesh_from_splats_dlnr.assert_called_once_with(
         gs.model,
@@ -58,7 +66,11 @@ def test_extract_mesh_uses_dlnr_when_requested(frc_mock):
 
 def test_extract_mesh_uses_basic_tsdf_when_not_dlnr(frc_mock):
     gs = _fake_trainer()
-    expected = (torch.zeros(2, 3), torch.zeros(1, 3, dtype=torch.long), torch.zeros(2, 3))
+    expected = (
+        torch.zeros(2, 3),
+        torch.zeros(1, 3, dtype=torch.long),
+        torch.zeros(2, 3),
+    )
     frc_mock.tools.mesh_from_splats.return_value = expected
     frc_mock.tools.mesh_from_splats_dlnr.reset_mock()
 

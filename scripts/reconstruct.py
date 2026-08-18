@@ -15,7 +15,6 @@ from pathlib import Path
 
 import torch
 
-
 from gaussutils.scene import ColmapScene
 from gaussutils.trainer import GaussianSplatTrainer
 

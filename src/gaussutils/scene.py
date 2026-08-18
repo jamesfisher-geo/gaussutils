@@ -1,10 +1,10 @@
-from typing import Literal, Union, Optional
-from pathlib import Path
 import logging
+from pathlib import Path
+from typing import Literal, Optional, Union
 
+import fvdb_reality_capture as frc
 import fvdb_reality_capture.transforms as transforms
 from fvdb import CameraModel
-import fvdb_reality_capture as frc
 
 logging.basicConfig(
     level=logging.INFO,

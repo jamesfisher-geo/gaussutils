@@ -2,10 +2,11 @@ import logging
 from pathlib import Path
 from typing import Union
 
-from gaussutils.trainer import GaussianSplatTrainer
 import fvdb_reality_capture as frc
 import point_cloud_utils as pcu
 import torch
+
+from gaussutils.trainer import GaussianSplatTrainer
 
 logger = logging.getLogger(__name__)
 

@@ -1,13 +1,13 @@
-from typing import Literal, Optional, Union
+import json
 import logging
 from pathlib import Path
-import json
-
-import numpy as np
+from typing import Literal, Optional, Union
 
 import fvdb
-import torch
 import fvdb_reality_capture as frc
+import numpy as np
+import torch
+
 from gaussutils.scene import ColmapScene
 
 logging.basicConfig(

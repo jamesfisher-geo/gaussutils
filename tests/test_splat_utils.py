@@ -31,7 +31,9 @@ def test_load_checkpoint_ply_path(tmp_path, fvdb_mock):
 
     model, runner = splat_utils.load_checkpoint(ply_path)
 
-    fvdb_mock.GaussianSplat3d.from_ply.assert_called_once_with(str(ply_path), device="cuda")
+    fvdb_mock.GaussianSplat3d.from_ply.assert_called_once_with(
+        str(ply_path), device="cuda"
+    )
     assert model is fake_model
     assert runner is None
 
@@ -46,7 +48,9 @@ def test_load_checkpoint_pt_path(tmp_path, frc_mock, monkeypatch):
     fake_model = _fake_model()
     fake_runner = frc_mock.radiance_fields.GaussianSplatReconstruction()
     fake_runner.model = fake_model
-    frc_mock.radiance_fields.GaussianSplatReconstruction.from_state_dict.return_value = fake_runner
+    frc_mock.radiance_fields.GaussianSplatReconstruction.from_state_dict.return_value = (
+        fake_runner
+    )
 
     model, runner = splat_utils.load_checkpoint(pt_path)
 
@@ -77,7 +81,9 @@ def test_save_model_usdz_calls_frc_export(tmp_path, frc_mock):
 
     splat_utils.save_model_usdz(out, model)
 
-    frc_mock.tools.export_splats_to_usdz.assert_called_once_with(model, out_path=str(out))
+    frc_mock.tools.export_splats_to_usdz.assert_called_once_with(
+        model, out_path=str(out)
+    )
 
 
 # --- filter_splats() ---
@@ -91,7 +97,10 @@ def test_filter_splats_calls_frc_tools_with_expected_args(frc_mock):
     frc_mock.tools.filter_splats_below_scale.side_effect = lambda m, **kw: m
 
     result = splat_utils.filter_splats(
-        model, above_scale_threshold=0.1, below_scale_threshold=0.2, opacity_percentile=0.9
+        model,
+        above_scale_threshold=0.1,
+        below_scale_threshold=0.2,
+        opacity_percentile=0.9,
     )
 
     frc_mock.tools.filter_splats_by_mean_percentile.assert_called_once()
@@ -128,12 +137,18 @@ def test_filter_splats_by_knn_density_removes_floater(pcu_mock):
 # --- auto_filter_splats() ---
 
 
-def test_auto_filter_splats_computes_adaptive_scale_and_opacity_thresholds(frc_mock, pcu_mock):
+def test_auto_filter_splats_computes_adaptive_scale_and_opacity_thresholds(
+    frc_mock, pcu_mock
+):
     n = 40
     scales_1d = torch.exp(torch.linspace(-2, 0, n))
     scales = scales_1d.unsqueeze(1).repeat(1, 3)
-    means = torch.stack([torch.arange(n, dtype=torch.float32), torch.zeros(n), torch.zeros(n)], dim=1)
-    logit_opacities = torch.full((n,), 10.0)  # sigmoid(10) ~= 0.99995, none below any sane floor
+    means = torch.stack(
+        [torch.arange(n, dtype=torch.float32), torch.zeros(n), torch.zeros(n)], dim=1
+    )
+    logit_opacities = torch.full(
+        (n,), 10.0
+    )  # sigmoid(10) ~= 0.99995, none below any sane floor
     model = FakeGaussianSplat3d(means, scales, logit_opacities)
 
     frc_mock.tools.filter_splats_by_mean_percentile.side_effect = lambda m, **kw: m
@@ -164,8 +179,12 @@ def test_auto_filter_splats_computes_adaptive_scale_and_opacity_thresholds(frc_m
 
     above_kwargs = frc_mock.tools.filter_splats_above_scale.call_args.kwargs
     below_kwargs = frc_mock.tools.filter_splats_below_scale.call_args.kwargs
-    assert above_kwargs["prune_scale3d_threshold"] == pytest.approx(expected_above, rel=1e-4)
-    assert below_kwargs["prune_scale3d_threshold"] == pytest.approx(expected_below, rel=1e-4)
+    assert above_kwargs["prune_scale3d_threshold"] == pytest.approx(
+        expected_above, rel=1e-4
+    )
+    assert below_kwargs["prune_scale3d_threshold"] == pytest.approx(
+        expected_below, rel=1e-4
+    )
 
     opacity_kwargs = frc_mock.tools.filter_splats_by_opacity_percentile.call_args.kwargs
     assert opacity_kwargs["percentile"] == pytest.approx(1.0, rel=1e-3)
@@ -219,7 +238,9 @@ def test_filter_splats_by_camera_frustum_keeps_only_visible_points():
     model = FakeGaussianSplat3d(means, torch.ones(4, 3))
     scene = make_fake_scene(num_cameras=1)
 
-    result = splat_utils.filter_splats_by_camera_frustum(model, scene, min_visible_views=1)
+    result = splat_utils.filter_splats_by_camera_frustum(
+        model, scene, min_visible_views=1
+    )
 
     assert result.num_gaussians == 2
 
@@ -251,12 +272,18 @@ def test_filter_splats_by_anisotropy_removes_needles():
 def test_filter_splats_for_scene_orchestrates_subfilters(monkeypatch):
     model = _fake_model()
     calls = []
-    monkeypatch.setattr(splat_utils, "auto_filter_splats", lambda m, **kw: (calls.append("auto"), m)[1])
     monkeypatch.setattr(
-        splat_utils, "filter_splats_by_anisotropy", lambda m, **kw: (calls.append("aniso"), m)[1]
+        splat_utils, "auto_filter_splats", lambda m, **kw: (calls.append("auto"), m)[1]
     )
     monkeypatch.setattr(
-        splat_utils, "filter_splats_by_cluster", lambda m, **kw: (calls.append("cluster"), m)[1]
+        splat_utils,
+        "filter_splats_by_anisotropy",
+        lambda m, **kw: (calls.append("aniso"), m)[1],
+    )
+    monkeypatch.setattr(
+        splat_utils,
+        "filter_splats_by_cluster",
+        lambda m, **kw: (calls.append("cluster"), m)[1],
     )
 
     result = splat_utils.filter_splats_for_scene(model)
@@ -269,7 +296,9 @@ def test_filter_splats_for_mesh_orchestrates_with_scene(monkeypatch):
     model = _fake_model()
     scene = make_fake_scene()
     calls = []
-    monkeypatch.setattr(splat_utils, "auto_filter_splats", lambda m, **kw: (calls.append("auto"), m)[1])
+    monkeypatch.setattr(
+        splat_utils, "auto_filter_splats", lambda m, **kw: (calls.append("auto"), m)[1]
+    )
     monkeypatch.setattr(
         splat_utils,
         "filter_splats_by_camera_frustum",
@@ -285,7 +314,9 @@ def test_filter_splats_for_mesh_orchestrates_with_scene(monkeypatch):
 def test_filter_splats_for_mesh_skips_frustum_without_scene(monkeypatch):
     model = _fake_model()
     calls = []
-    monkeypatch.setattr(splat_utils, "auto_filter_splats", lambda m, **kw: (calls.append("auto"), m)[1])
+    monkeypatch.setattr(
+        splat_utils, "auto_filter_splats", lambda m, **kw: (calls.append("auto"), m)[1]
+    )
     monkeypatch.setattr(
         splat_utils,
         "filter_splats_by_camera_frustum",

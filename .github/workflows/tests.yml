@@ -13,11 +13,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      # gaussutils' real dependencies (fvdb-core, fvdb_reality_capture) are
-      # CUDA-only wheels from a private index — not installable on this runner.
-      # Tests mock those two packages out entirely (see tests/conftest.py), so
-      # we install gaussutils itself without its heavy deps, plus the minimal
-      # set of real packages the mocked test paths actually exercise.
       - name: Install gaussutils (no deps)
         run: pip install -e . --no-deps
 

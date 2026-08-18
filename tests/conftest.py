@@ -44,7 +44,15 @@ _pcu = _install_fake_module("point_cloud_utils")
 @pytest.fixture(autouse=True)
 def _reset_frc_mocks():
     """Reset call history / configured return values between tests."""
-    for mod in (_fvdb, _frc, _frc.transforms, _frc.sfm_scene, _frc.radiance_fields, _frc.tools, _pcu):
+    for mod in (
+        _fvdb,
+        _frc,
+        _frc.transforms,
+        _frc.sfm_scene,
+        _frc.radiance_fields,
+        _frc.tools,
+        _pcu,
+    ):
         mod.reset_mock(return_value=True, side_effect=True)
     _fvdb.CameraModel = _FakeCameraModel
     yield
