@@ -12,8 +12,8 @@ license = { text = "MIT" }
 
 dependencies = [
     "torch==2.10.0",
-    "fvdb-core==0.4.0+pt210.cu130",
-    "fvdb-reality-capture",
+    "fvdb-core==0.5.0+pt211.cu130",
+    "fvdb-reality-capture==0.5.0",
     "laspy[lazrs]>=2.5",
     "rasterio>=1.3",
 ]

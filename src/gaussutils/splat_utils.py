@@ -14,36 +14,6 @@ from scipy.sparse.csgraph import connected_components
 logger = logging.getLogger(__name__)
 
 
-def train_gaussian_splat(
-    scene: frc.sfm_scene.SfmScene,
-    output_dir: Union[str, Path],
-) -> tuple[fvdb.GaussianSplat3d, frc.radiance_fields.GaussianSplatReconstruction]:
-    """Train a Gaussian splat radiance field from an SfmScene."""
-    logger.info("Initializing Gaussian splat reconstruction...")
-    output_dir = Path(output_dir)
-    writer_dir = output_dir / "info"
-    writer_dir.mkdir(parents=True, exist_ok=True)
-    writer = frc.radiance_fields.GaussianSplatReconstructionWriter(
-        run_name=None,
-        save_path=writer_dir,
-        config=frc.radiance_fields.GaussianSplatReconstructionWriterConfig(
-            save_checkpoints=True, save_plys=True, save_metrics=False
-        ),
-    )
-
-    runner = frc.radiance_fields.GaussianSplatReconstruction.from_sfm_scene(
-        scene, writer=writer
-    )
-    logger.info("Starting optimization (this may take a while)...")
-    runner.optimize()
-
-    model = runner.model
-    logger.info(
-        f"Training complete: {model.num_gaussians} Gaussians, " f"device={model.device}"
-    )
-    return model, runner
-
-
 def load_checkpoint(
     checkpoint_path: Union[str, Path],
 ) -> tuple[
@@ -72,23 +42,6 @@ def load_checkpoint(
     )
     model = runner.model
     return model, runner
-
-
-def save_model_ply(
-    output_model: Union[str, Path],
-    model: fvdb.GaussianSplat3d,
-    runner: Optional[frc.radiance_fields.GaussianSplatReconstruction] = None,
-) -> None:
-    """Save the trained model to disk as a PLY."""
-
-    output_model = Path(output_model)
-
-    if output_model.suffix.lower() != ".ply":
-        raise ValueError("invalid file format.  The output file must be a PLY.")
-
-    metadata = runner.reconstruction_metadata if runner is not None else None
-    model.save_ply(str(output_model), metadata=metadata)
-    logger.info(f"Saved Gaussian splat PLY to {output_model}")
 
 
 def save_model_usdz(

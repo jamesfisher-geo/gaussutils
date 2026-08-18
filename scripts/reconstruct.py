@@ -15,10 +15,15 @@ from pathlib import Path
 
 import torch
 
-from gaussutils.georef_utils import save_georef_transform
-from gaussutils.scene_utils import load_scene, preprocess_scene
-from gaussutils.splat_utils import save_model_ply, save_model_usdz, train_gaussian_splat
 
+from gaussutils.scene import ColmapScene
+from gaussutils.trainer import GaussianSplatTrainer
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
 logger = logging.getLogger(__name__)
 
 
@@ -105,34 +110,28 @@ def main():
 
     logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
 
-    # Load and clean the dataset
-    scene = load_scene(
+    scene = ColmapScene(
         dataset_path=dataset_path,
         normalization_type=normalization_type,
+        image_downsample_factor=downsample,
+        percentile_min=(percentile_min,) * 3,
+        percentile_max=(percentile_max,) * 3,
+        min_points_per_image=min_pts_per_image,
     )
-    scene = preprocess_scene(
-        scene=scene,
-        downsample=downsample,
-        percentile_min=percentile_min,
-        percentile_max=percentile_max,
-        min_points=min_pts_per_image,
-    )
-    if args.georeferenced:
-        save_georef_transform(
-            ecef_to_enu=scene.transformation_matrix,
-            output_path=Path(output_dir / "enu_to_ecef.json"),
-        )
+    scene.filter_scene()
 
-    # Train the Gaussian splat model
-    model, runner = train_gaussian_splat(
+    trainer = GaussianSplatTrainer(
         scene=scene,
         output_dir=output_dir,
+        run_name="model",
+        save_plys=True,
+        save_checkpoints=True,
     )
-
-    # Save the model
-    output_model_ply = output_dir / "model.ply"
-    save_model_ply(output_model=str(output_model_ply), model=model, runner=runner)
-    save_model_usdz(output_model=output_model_ply.with_suffix(".usdz"), model=model)
+    trainer.train()
+    trainer.filter_model()
+    trainer.save_ply()
+    trainer.save_usdz()
+    trainer.save_georef()  # no-op unless --georeferenced was set
 
     logger.info(f"Pipeline complete. Outputs saved to {output_dir}")
 
