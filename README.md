@@ -6,16 +6,19 @@ A library of pipeline tools and Dockerfiles to build and run tools to create 3-D
 ### Requirements
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- CUDA 12.8 compatible GPU
+- CUDA 13.0 and a compatible GPU
 
 ### Install uv
 
-To install `uv`, follow the instructions [here](https://docs.astral.sh/uv/getting-started/installation/) or run the command below.
+
+
+### How to Install
+
+`gaussutils` uses the `uv` package manager. Install `uv` by following the instructions [here](https://docs.astral.sh/uv/getting-started/installation/) or run the command below.
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Install gaussutils
 
 Clone the repository:
 ```bash
@@ -28,9 +31,15 @@ Install the library in an existing environment with
 uv pip install . --system
 ```
 
----
+## How to use
 
-## Docker
+### Train a Gaussian Splat
+
+```bash
+python3 scripts/reconstruct.py --dataset-path <COLMAP INPUT> 
+```
+
+## Run with Docker
 
 If you prefer to use Docker rather than installing locally, you can build an image with the full envrionment set up.
 
@@ -46,10 +55,3 @@ Run the Docker image and exec into the command line. Mount directories for your 
 docker run --gpus all -p 8080:8080 -v <path to data>:/data -v <path to code>:/code -it gaussutils
 ```
 
-## How to use
-
-### Train a Gaussian Splat
-
-```bash
-python3 main.py --dataset-path <COLMAP INPUT>
-```

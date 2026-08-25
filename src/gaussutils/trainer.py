@@ -23,7 +23,7 @@ class GaussianSplatTrainer:
 
     Wraps `frc.radiance_fields.GaussianSplatReconstruction`: `train()` runs the
     optimization loop, `filter_model()` removes floaters/outliers from the result,
-    and `save_ply()` / `save_usdz()` / `save_georef()` write outputs to `output_dir`.
+    and `save_ply()` / `save_usdz()` write outputs to `output_dir`.
     """
 
     def __init__(
@@ -163,7 +163,7 @@ class GaussianSplatTrainer:
 
         if self.optimizer_type == "mcmc":
             config.remove_gaussians_outside_scene_bbox = (
-                False  # MUST stay False with the MCMC optimizer
+                False  # This must be false when using the MCMC optimizer
             )
             optimizer_config = frc.radiance_fields.GaussianSplatOptimizerMCMCConfig(
                 deletion_opacity_threshold=self.deletion_opacity_threshold,
@@ -292,26 +292,3 @@ class GaussianSplatTrainer:
             )
             frc.tools.export_splats_to_usd(self.model, str(output_model), usdz=True)
         logger.info(f"Saved USDZ to {output_model}")
-
-    def save_georef(self) -> None:
-        """Save georef sidecar JSON describing the model's ENU coordinate frame.
-
-        Uses the same schema as the input georef.json, where "local" is the
-        model.ply ENU frame.
-        """
-        if self.normalization_type != "ecef2enu":
-            logger.info(
-                "Model was not input with real-world coordinates. Skipping georeference..."
-            )
-            return
-        data = {
-            "coordinate_system": "ENU",
-            "epsg": 4978,
-            "enu_to_ecef_matrix": np.linalg.inv(self.transform_matrix).tolist(),
-            "note": (
-                "Model coordinates are ENU meters. Apply enu_to_ecef_matrix to "
-                "convert model (ENU) coordinates to ECEF (EPSG:4978)."
-            ),
-        }
-        self.georef_json.write_text(json.dumps(data, indent=2))
-        logger.info(f"Saved georef sidecar to {self.georef_json}")

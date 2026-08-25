@@ -63,37 +63,38 @@ class ColmapScene:
 
         self.scene: Optional[frc.sfm_scene.SfmScene] = None
 
-        self.load_scene()
+        self.load()
 
     def _check_scene(self) -> None:
         """Raise if the scene has not been loaded."""
         if not self.scene:
-            raise ValueError("Missing input COLMAP scene")
+            raise ValueError("Scene not available")
 
-    def load_scene(self) -> None:
-        """Load the raw COLMAP dataset from `self.dataset_path` into `self.scene`.
-
-        Normalization and filtering are not applied here — call `filter_scene()`
-        afterward to run the cleanup pipeline.
-        """
+    def load(self) -> None:
+        """Load the dataset from `self.dataset_path` into `self.scene`."""
         if not self.dataset_path.is_dir():
             raise ValueError(f"Dataset path does not exist: {self.dataset_path}")
 
-        logger.info(f"Loading COLMAP dataset from {self.dataset_path}")
+        logger.info(f"Loading dataset from {self.dataset_path}")
         self.scene = frc.sfm_scene.SfmScene.from_colmap(str(self.dataset_path))
         logger.info(
-            f"Raw scene: {self.scene.num_images} images from {self.scene.num_cameras} with {len(self.scene.points)} points"
+            f"Input scene: {self.scene.num_images} images from {self.scene.num_cameras} with {len(self.scene.points)} points"
         )
 
     def filter_scene(self) -> None:
         """Apply the cleanup pipeline to the loaded scene.
 
-        Runs, in order: image downsampling, undistortion, scene normalization
-        (per `self.normalization_type`), percentile-based point outlier filtering,
-        cropping the scene to the filtered points, and removal of images with too
-        few visible points. Raises `RuntimeError` if any non-pinhole cameras remain
-        after undistortion, since training with OpenCV camera models is silently
-        broken in fvdb 0.5.0.
+        Runs:
+         - image downsampling
+         - image undistortion
+         - scene coordinate normalization using `self.normalization_type`
+         - outlier filtering,
+         - cropping the scene to the filtered points
+         - removal of images with too few visible points.
+
+        Raises:
+          - `RuntimeError` if any non-pinhole cameras remain after undistortion, since training with OpenCV
+            camera models is silently broken in fvdb 0.5.0.
         """
 
         cleanup = transforms.Compose(
@@ -121,8 +122,7 @@ class ColmapScene:
         if non_pinhole:
             raise RuntimeError(
                 f"Scene still contains non-pinhole cameras after undistortion: "
-                f"{sorted(non_pinhole)}. Training with OpenCV camera models is "
-                "silently broken in fvdb 0.5.0."
+                f"{sorted(non_pinhole)}. Training with OpenCV camera models"
             )
 
         logger.info(

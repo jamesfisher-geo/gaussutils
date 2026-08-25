@@ -327,26 +327,3 @@ def test_save_usdz_falls_back_to_export_splats_to_usd(tmp_path, frc_mock):
     frc_mock.tools.export_splats_to_usd.assert_called_once_with(
         trainer.model, expected_path, usdz=True
     )
-
-
-# --- save_georef() ---
-
-
-def test_save_georef_noop_when_not_ecef2enu(tmp_path):
-    trainer = _make_trainer(tmp_path, normalization_type="pca")
-    trainer.save_georef()
-    assert not trainer.georef_json.exists()
-
-
-def test_save_georef_writes_valid_json_when_ecef2enu(tmp_path):
-    trainer = _make_trainer(tmp_path, normalization_type="ecef2enu")
-    trainer.transform_matrix = np.diag([2.0, 2.0, 2.0, 1.0])
-
-    trainer.save_georef()
-
-    assert trainer.georef_json.exists()
-    data = json.loads(trainer.georef_json.read_text())
-    assert data["coordinate_system"] == "ENU"
-    assert data["epsg"] == 4978
-    expected_inv = np.linalg.inv(trainer.transform_matrix).tolist()
-    assert data["enu_to_ecef_matrix"] == expected_inv

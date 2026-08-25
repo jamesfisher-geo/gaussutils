@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument(
         "--dataset-path",
         type=str,
+        required=True,
         help="Path to COLMAP dataset directory.",
     )
     parser.add_argument(
@@ -43,9 +44,16 @@ def parse_args():
         help="Directory for output files (default: <dataset-path>/output).",
     )
     parser.add_argument(
-        "--georeferenced",
+        "--run-name",
+        required=False,
+        type=str,
+        default=None,
+        help="Name for the training run. Defaults to the current date & time",
+    )
+    parser.add_argument(
+        "--ecef",
         action="store_true",
-        help="Set if the input COLMAP dataset is ECEF aligned. Coordinates wil be normalized to ENU. Apply the inverse of the output transform to place the outputs back into ECEF space",
+        help="Set if the input COLMAP dataset is ECEF aligned. Coordinates wil be normalized to ENU.",
     )
     parser.add_argument(
         "--downsample",
@@ -71,6 +79,12 @@ def parse_args():
         default=50,
         help="Remove images with fewer visible points than this (default: 50).",
     )
+    parser.add_argument(
+        "--max-gaussians",
+        type=int,
+        default=6_000_000,
+        help="Maximum number of gaussians allowed during training",
+    )
     return parser.parse_args()
 
 
@@ -94,12 +108,15 @@ def main():
         output_dir = Path(args.output_dir)
     logger.info(f"Setting output directory: {output_dir}")
 
+    run_name = args.run_name
+
     downsample = int(args.downsample)
     percentile_min = float(args.percentile_min)
     percentile_max = float(args.percentile_max)
     min_pts_per_image = int(args.min_points_per_image)
+    max_gaussians = int(args.max_gaussians)
 
-    if args.georeferenced:
+    if args.ecef:
         normalization_type = "ecef2enu"
     else:
         normalization_type = "pca"
@@ -122,15 +139,15 @@ def main():
     trainer = GaussianSplatTrainer(
         scene=scene,
         output_dir=output_dir,
-        run_name="model",
+        run_name=run_name,
         save_plys=True,
         save_checkpoints=True,
+        max_gaussians=max_gaussians,
     )
     trainer.train()
     trainer.filter_model()
     trainer.save_ply()
     trainer.save_usdz()
-    trainer.save_georef()
 
     logger.info(f"Pipeline complete. Outputs saved to {output_dir}")
 
