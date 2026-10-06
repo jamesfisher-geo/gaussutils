@@ -59,13 +59,10 @@ def test_init_pulls_attrs_from_colmap_scene(tmp_path):
 def test_init_stores_percentile_and_bbox_params(tmp_path):
     trainer = _make_trainer(
         tmp_path,
-        scale_min_percentile=0.1,
-        scale_max_percentile=0.9,
         opacity_keep_frac=0.5,
         crop_margin_m=2.0,
     )
-    assert trainer.scale_min_percentile == 0.1
-    assert trainer.scale_max_percentile == 0.9
+
     assert trainer.opacity_keep_frac == 0.5
     assert trainer.crop_margin_m == 2.0
 
@@ -215,59 +212,38 @@ def test_clean_splats_bbox_crop_removes_out_of_bounds_points(tmp_path, frc_mock)
             torch.full((3, 3), 1000.0),  # clearly outside
         ]
     )
-    # slight variation (not a constant) so the scale filter's strict
-    # inequalities don't exclude every point at the percentile boundary
-    scale_values = torch.linspace(0.4, 0.6, means.shape[0])
-    scales = scale_values.unsqueeze(1).repeat(1, 3)
+    scales = torch.ones_like(means)
+    trainer = _build_trainer_with_model(
+        tmp_path, frc_mock, points, means, scales, crop_margin_m=5.0
+    )
+
+    trainer.clean_splats()
+
+    assert trainer.splats.num_gaussians == 20
+    assert trainer.splats.means.max().item() < 100
+
+
+def test_clean_splats_applies_opacity_filter(tmp_path, frc_mock):
+    points = np.array([[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]])
+    means = torch.zeros(10, 3) + 5.0  # all inside the bbox
     trainer = _build_trainer_with_model(
         tmp_path,
         frc_mock,
         points,
         means,
-        scales,
-        crop_margin_m=5.0,
-        scale_min_percentile=0.0,
-        scale_max_percentile=1.0,
+        torch.ones_like(means),
+        opacity_keep_frac=0.75,
     )
+    filtered = FakeGaussianSplat3d(torch.zeros(4, 3), torch.ones(4, 3))
+    frc_mock.tools.filter_splats_by_opacity_percentile.side_effect = None
+    frc_mock.tools.filter_splats_by_opacity_percentile.return_value = filtered
 
     trainer.clean_splats()
 
-    # bbox crop must have removed the 3 far-away points; scale filter may
-    # additionally trim a couple of boundary points, but the bulk survives
-    assert 15 <= trainer.splats.num_gaussians <= 20
-    assert trainer.splats.means.max().item() < 100
-
-
-def test_clean_splats_scale_percentiles_change_result(tmp_path, frc_mock):
-    points = np.array([[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]])
-    means = torch.zeros(100, 3) + 5.0  # all inside a generous bbox
-    scales = torch.linspace(0.0, 1.0, 100).unsqueeze(1).repeat(1, 3)
-
-    trainer_narrow = _build_trainer_with_model(
-        tmp_path,
-        frc_mock,
-        points,
-        means.clone(),
-        scales.clone(),
-        crop_margin_m=1000.0,
-        scale_min_percentile=0.4,
-        scale_max_percentile=0.6,
-    )
-    trainer_narrow.clean_splats()
-
-    trainer_wide = _build_trainer_with_model(
-        tmp_path,
-        frc_mock,
-        points,
-        means.clone(),
-        scales.clone(),
-        crop_margin_m=1000.0,
-        scale_min_percentile=0.0,
-        scale_max_percentile=1.0,
-    )
-    trainer_wide.clean_splats()
-
-    assert trainer_narrow.splats.num_gaussians < trainer_wide.splats.num_gaussians
+    call = frc_mock.tools.filter_splats_by_opacity_percentile.call_args
+    assert call.kwargs == {"percentile": 0.75, "decimate": 4}
+    assert call.args[0].num_gaussians == 10  # bbox crop kept everything
+    assert trainer.splats is filtered
 
 
 # --- export_ply() ---

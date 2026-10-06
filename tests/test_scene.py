@@ -49,13 +49,13 @@ def test_load_scene_raises_for_missing_dataset_path(tmp_path, frc_mock):
     scene = _make_scene(tmp_path, frc_mock)  # valid dir first so __init__ succeeds
     scene.dataset_path = missing
     with pytest.raises(ValueError, match="does not exist"):
-        scene.load_scene()
+        scene.load()
 
 
 def test_check_scene_raises_when_unset(tmp_path, frc_mock):
     scene = _make_scene(tmp_path, frc_mock)
     scene.scene = None
-    with pytest.raises(ValueError, match="Missing input COLMAP scene"):
+    with pytest.raises(ValueError, match="Scene not available"):
         scene._check_scene()
 
 

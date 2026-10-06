@@ -107,12 +107,20 @@ Port `8080` is exposed for the `fvdb.viz` viewer.
 
 ## Development
 
-Install the dev tools (pytest, ruff, mypy) and run the tests:
+Install the dev tools (pytest, ruff, mypy):
 ```bash
 uv pip install ".[dev]" --system
+```
+
+### Running tests
+
+From the repository root:
+```bash
 pytest
 ```
 
-## License
+Run linting locally with
 
-See [LICENSE](LICENSE).
+```bash
+pre-commit run --all-files
+```

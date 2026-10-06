@@ -82,5 +82,5 @@ Port 8080 serves the `fvdb.viz` viewer, which requires Vulkan.
 - `Dockerfile` pins older versions (`fvdb-core 0.4.0`, `torch 2.10.0`, CUDA 12.8 base image) than `pyproject.toml` (`0.5.0`, `2.11.0`, cu130).
 - `point_cloud_utils` is imported by `mesh_utils.py` / `splat_utils.py` but is not listed in `pyproject.toml` dependencies.
 - `pyproject.toml` declares the MIT license, but `LICENSE` is Apache 2.0.
-- `tests/test_trainer.py` still passes `scale_min_percentile` / `scale_max_percentile`, which the trainer no longer accepts (3 failing tests). `spatial_bounds_pct` is stored but unused by `clean_splats()`.
+- `spatial_bounds_pct` is stored but unused by `clean_splats()`.
 - `CLAUDE.md` is outdated: it references removed scripts and CUDA 12.8.
