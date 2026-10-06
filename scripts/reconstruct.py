@@ -15,10 +15,14 @@ from pathlib import Path
 
 import torch
 
-from gaussutils.georef_utils import save_georef_transform
-from gaussutils.scene_utils import load_scene, preprocess_scene
-from gaussutils.splat_utils import save_model_ply, save_model_usdz, train_gaussian_splat
+from gaussutils.scene import ColmapScene
+from gaussutils.trainer import GaussianSplatModelTrainer
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
 logger = logging.getLogger(__name__)
 
 
@@ -29,6 +33,7 @@ def parse_args():
     parser.add_argument(
         "--dataset-path",
         type=str,
+        required=True,
         help="Path to COLMAP dataset directory.",
     )
     parser.add_argument(
@@ -39,9 +44,16 @@ def parse_args():
         help="Directory for output files (default: <dataset-path>/output).",
     )
     parser.add_argument(
-        "--georeferenced",
+        "--run-name",
+        required=False,
+        type=str,
+        default=None,
+        help="Name for the training run. Defaults to the current date & time",
+    )
+    parser.add_argument(
+        "--ecef",
         action="store_true",
-        help="Set if the input COLMAP dataset is ECEF aligned. Coordinates wil be normalized to ENU. Apply the inverse of the output transform to place the outputs back into ECEF space",
+        help="Set if the input COLMAP dataset is ECEF aligned. Coordinates wil be normalized to ENU.",
     )
     parser.add_argument(
         "--downsample",
@@ -67,6 +79,12 @@ def parse_args():
         default=50,
         help="Remove images with fewer visible points than this (default: 50).",
     )
+    parser.add_argument(
+        "--max-gaussians",
+        type=int,
+        default=6_000_000,
+        help="Maximum number of gaussians allowed during training",
+    )
     return parser.parse_args()
 
 
@@ -85,17 +103,20 @@ def main():
         raise ValueError(f"Dataset path does not exist: {dataset_path}")
 
     if not args.output_dir:
-        output_dir = dataset_path / "output"
+        output_dir = dataset_path / "3dgs"
     else:
         output_dir = Path(args.output_dir)
     logger.info(f"Setting output directory: {output_dir}")
+
+    run_name = args.run_name
 
     downsample = int(args.downsample)
     percentile_min = float(args.percentile_min)
     percentile_max = float(args.percentile_max)
     min_pts_per_image = int(args.min_points_per_image)
+    max_gaussians = int(args.max_gaussians)
 
-    if args.georeferenced:
+    if args.ecef:
         normalization_type = "ecef2enu"
     else:
         normalization_type = "pca"
@@ -105,34 +126,28 @@ def main():
 
     logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
 
-    # Load and clean the dataset
-    scene = load_scene(
+    scene = ColmapScene(
         dataset_path=dataset_path,
         normalization_type=normalization_type,
+        image_downsample_factor=downsample,
+        percentile_min=(percentile_min,) * 3,
+        percentile_max=(percentile_max,) * 3,
+        min_points_per_image=min_pts_per_image,
     )
-    scene = preprocess_scene(
-        scene=scene,
-        downsample=downsample,
-        percentile_min=percentile_min,
-        percentile_max=percentile_max,
-        min_points=min_pts_per_image,
-    )
-    if args.georeferenced:
-        save_georef_transform(
-            ecef_to_enu=scene.transformation_matrix,
-            output_path=Path(output_dir / "enu_to_ecef.json"),
-        )
+    scene.filter_scene()
 
-    # Train the Gaussian splat model
-    model, runner = train_gaussian_splat(
-        scene=scene,
-        output_dir=output_dir,
+    splat_trainer = GaussianSplatModelTrainer(
+        colmap_scene=scene,
+        out_dir=output_dir,
+        run_name=run_name,
+        write_intermediate_plys=True,
+        write_checkpoints=True,
+        max_gaussians=max_gaussians,
     )
-
-    # Save the model
-    output_model_ply = output_dir / "model.ply"
-    save_model_ply(output_model=str(output_model_ply), model=model, runner=runner)
-    save_model_usdz(output_model=output_model_ply.with_suffix(".usdz"), model=model)
+    splat_trainer.fit()
+    splat_trainer.clean_splats()
+    splat_trainer.export_ply()
+    splat_trainer.export_usdz()
 
     logger.info(f"Pipeline complete. Outputs saved to {output_dir}")
 
