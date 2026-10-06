@@ -65,7 +65,7 @@ def test_load_checkpoint_pt_path(tmp_path, frc_mock, monkeypatch):
 # NOTE: this exercises our own call site, not the real frc API. save_model_usdz
 # calls frc.tools.export_splats_to_usdz, which does not exist on the real
 # fvdb_reality_capture package (the real function is export_splats_to_usd with a
-# usdz=True kwarg, per GaussianSplatTrainer.save_usdz). Mocking can't catch that
+# usdz=True kwarg, per GaussianSplatModelTrainer.export_usdz). Mocking can't catch that
 # drift — it's a known, pre-existing bug in this function, out of scope here.
 
 

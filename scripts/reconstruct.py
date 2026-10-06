@@ -16,7 +16,7 @@ from pathlib import Path
 import torch
 
 from gaussutils.scene import ColmapScene
-from gaussutils.trainer import GaussianSplatTrainer
+from gaussutils.trainer import GaussianSplatModelTrainer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -136,18 +136,18 @@ def main():
     )
     scene.filter_scene()
 
-    trainer = GaussianSplatTrainer(
-        scene=scene,
-        output_dir=output_dir,
+    splat_trainer = GaussianSplatModelTrainer(
+        colmap_scene=scene,
+        out_dir=output_dir,
         run_name=run_name,
-        save_plys=True,
-        save_checkpoints=True,
+        write_intermediate_plys=True,
+        write_checkpoints=True,
         max_gaussians=max_gaussians,
     )
-    trainer.train()
-    trainer.filter_model()
-    trainer.save_ply()
-    trainer.save_usdz()
+    splat_trainer.fit()
+    splat_trainer.clean_splats()
+    splat_trainer.export_ply()
+    splat_trainer.export_usdz()
 
     logger.info(f"Pipeline complete. Outputs saved to {output_dir}")
 

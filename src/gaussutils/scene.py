@@ -19,7 +19,7 @@ class ColmapScene:
 
     On construction, loads the raw COLMAP dataset via `frc.sfm_scene.SfmScene.from_colmap`.
     Call `filter_scene()` to apply downsampling, undistortion, normalization, and
-    outlier/low-coverage filtering before handing the scene to a `GaussianSplatTrainer`.
+    outlier/low-coverage filtering before handing the scene to a `GaussianSplatModelTrainer`.
     """
 
     def __init__(

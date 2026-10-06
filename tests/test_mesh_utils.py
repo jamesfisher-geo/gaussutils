@@ -9,30 +9,30 @@ from tests.helpers import FakeGaussianSplat3d, make_fake_scene
 
 
 def _fake_trainer(scene_set=True, model_set=True):
-    """A GaussianSplatTrainer-shaped double: real _require_* semantics, mocked
+    """A GaussianSplatModelTrainer-shaped double: real _check_* semantics, mocked
     model/scene so extract_mesh's argument-passing can be inspected."""
-    trainer = MagicMock(name="GaussianSplatTrainer")
-    trainer.scene = make_fake_scene(num_cameras=2) if scene_set else None
-    trainer.model = (
+    trainer = MagicMock(name="GaussianSplatModelTrainer")
+    trainer.sfm_scene = make_fake_scene(num_cameras=2) if scene_set else None
+    trainer.splats = (
         FakeGaussianSplat3d(torch.zeros(3, 3), torch.ones(3, 3)) if model_set else None
     )
 
-    def _require_scene():
-        if not trainer.scene:
-            raise ValueError("Missing input scene")
+    def _check_scene():
+        if not trainer.sfm_scene:
+            raise ValueError("No SfM scene set")
 
-    def _require_model():
-        if not trainer.model:
-            raise ValueError("Missing 3DGS model")
+    def _check_splats():
+        if not trainer.splats:
+            raise ValueError("No splat model available")
 
-    trainer._require_scene.side_effect = _require_scene
-    trainer._require_model.side_effect = _require_model
+    trainer._check_scene.side_effect = _check_scene
+    trainer._check_splats.side_effect = _check_splats
     return trainer
 
 
 def test_extract_mesh_requires_scene_and_model(frc_mock):
     gs = _fake_trainer(model_set=False)
-    with pytest.raises(ValueError, match="Missing 3DGS model"):
+    with pytest.raises(ValueError, match="No splat model available"):
         mesh_utils.extract_mesh(gs, truncation_margin=0.1, use_dlnr=False)
 
 
@@ -51,10 +51,10 @@ def test_extract_mesh_uses_dlnr_when_requested(frc_mock):
     )
 
     frc_mock.tools.mesh_from_splats_dlnr.assert_called_once_with(
-        gs.model,
-        gs.scene.camera_to_world_matrices,
-        gs.scene.projection_matrices,
-        gs.scene.image_sizes,
+        gs.splats,
+        gs.sfm_scene.camera_to_world_matrices,
+        gs.sfm_scene.projection_matrices,
+        gs.sfm_scene.image_sizes,
         0.5,
         grid_shell_thickness=3.0,
         dtype=torch.float32,
@@ -77,10 +77,10 @@ def test_extract_mesh_uses_basic_tsdf_when_not_dlnr(frc_mock):
     result = mesh_utils.extract_mesh(gs, truncation_margin=0.5, use_dlnr=False)
 
     frc_mock.tools.mesh_from_splats.assert_called_once_with(
-        gs.model,
-        gs.scene.camera_to_world_matrices,
-        gs.scene.projection_matrices,
-        gs.scene.image_sizes,
+        gs.splats,
+        gs.sfm_scene.camera_to_world_matrices,
+        gs.sfm_scene.projection_matrices,
+        gs.sfm_scene.image_sizes,
         0.5,
         grid_shell_thickness=3.0,
         dtype=torch.float32,

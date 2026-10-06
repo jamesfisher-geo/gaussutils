@@ -1,4 +1,3 @@
-import json
 import logging
 from pathlib import Path
 from typing import Literal, Optional, Union
@@ -18,277 +17,269 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class GaussianSplatTrainer:
-    """Trains, filters, and saves a Gaussian splat radiance field from a ColmapScene.
+class GaussianSplatModelTrainer:
+    """Fits, cleans, and exports a 3DGS model for a ColmapScene.
 
-    Wraps `frc.radiance_fields.GaussianSplatReconstruction`: `train()` runs the
-    optimization loop, `filter_model()` removes floaters/outliers from the result,
-    and `save_ply()` / `save_usdz()` write outputs to `output_dir`.
+    Attributes:
+        splats: The fitted model, or None before `fit()`.
+        reconstruction: The frc reconstruction runner, or None before `fit()`.
+        ply_path: Output PLY path.
     """
 
     def __init__(
         self,
-        scene: ColmapScene,
-        output_dir: Union[Path, str],
+        colmap_scene: ColmapScene,
+        out_dir: Union[Path, str],
         run_name: str = None,
         max_gaussians: int = -1,
-        save_plys: bool = False,
-        save_checkpoints: bool = False,
-        save_metrics: bool = False,
-        deletion_opacity_threshold: float = 0.005,
-        opacity_regularization: float = 0.01,
-        scale_regularization: float = 0.01,
+        write_intermediate_plys: bool = False,
+        write_checkpoints: bool = False,
+        write_metrics: bool = False,
+        prune_opacity_min: float = 0.005,
+        opacity_reg_weight: float = 0.01,
+        scale_reg_weight: float = 0.01,
         sh_degree: int = 3,
         optimizer_type: Literal["mcmc", "original"] = "mcmc",
-        model_bbox_margin: float = 5.0,
-        spatial_percentile: tuple[float, float, float, float, float, float] = (
+        crop_margin_m: float = 5.0,
+        spatial_bounds_pct: tuple[float, float, float, float, float, float] = (
             0.95,
             0.95,
             0.95,
             0.95,
             0.98,
             0.98,
-        ),  # (minx, maxx, miny, maxy, minz, maxz)
-        opacity_percentile: float = 0.98,
-        scale_min_percentile: float = 0.02,
-        scale_max_percentile: float = 0.98,
+        ),  # order: x_lo, x_hi, y_lo, y_hi, z_lo, z_hi
+        opacity_keep_frac: float = 0.98,
     ):
-        """Configure a trainer for a given scene.
+        """Initializes the trainer.
 
         Args:
-            scene: The ColmapScene to train on. Its `filter_scene()` should
-                   already have been called.
-            output_dir: Directory to write checkpoints, PLYs, and other outputs to.
-            run_name: Name for this training run, used to name output files
-                      (e.g. "{run_name}.ply"). Default None.
-            max_gaussians: Maximum number of gaussians to allow during training.
-                           -1 for unlimited. Default -1.
-            save_plys: Save intermediate PLY checkpoints during training. Default False.
-            save_checkpoints: Save intermediate .pt checkpoints during training. Default False.
-            save_metrics: Save training metrics. Default False.
-            deletion_opacity_threshold: Gaussians with opacity below this are pruned
-                                        during optimization. Default 0.005.
-            opacity_regularization: MCMC opacity regularization weight. Ignored by
-                                    the "original" optimizer. Default 0.01.
-            scale_regularization: MCMC scale regularization weight. Ignored by the
-                                  "original" optimizer. Default 0.01.
-            sh_degree: Spherical harmonics degree for view-dependent color. Default 3.
-            optimizer_type: "mcmc" or "original" 3DGS optimizer. Default "mcmc".
-            model_bbox_margin: Margin in meters added around the scene's point cloud
-                               bounding box when cropping gaussians in `filter_model()`.
-                               Default 5.0.
-            spatial_percentile: Spatial outlier percentile bounds passed to
-                                `filter_model()` as (minx, maxx, miny, maxy, minz, maxz).
-                                Default (0.95, 0.95, 0.95, 0.95, 0.98, 0.98).
-            opacity_percentile: Opacity percentile cutoff used in `filter_model()`.
-                                Default 0.98.
-            scale_min_percentile: Lower scale percentile cutoff used in `filter_model()`.
-                                  Default 0.02.
-            scale_max_percentile: Upper scale percentile cutoff used in `filter_model()`.
-                                  Default 0.98.
+            colmap_scene: Scene to fit; call its `filter_scene()` first.
+            out_dir: Output directory.
+            run_name: Run label; names output files.
+            max_gaussians: Gaussian count limit; -1 for unlimited.
+            write_intermediate_plys: Save PLY snapshots during training.
+            write_checkpoints: Save .pt snapshots during training.
+            write_metrics: Save training metrics.
+            prune_opacity_min: Opacity below which gaussians are pruned.
+            opacity_reg_weight: MCMC opacity regularization weight.
+            scale_reg_weight: MCMC scale regularization weight.
+            sh_degree: Spherical harmonics degree.
+            optimizer_type: "mcmc" or "original".
+            crop_margin_m: Bounding-box crop margin in meters.
+            spatial_bounds_pct: Per-axis percentile bounds
+                (x_lo, x_hi, y_lo, y_hi, z_lo, z_hi).
+            opacity_keep_frac: Opacity percentile cutoff.
         """
-        self.output_dir = Path(output_dir)
+        self.out_dir = Path(out_dir)
         self.run_name = run_name
 
-        self.model_ply = self.output_dir / f"{self.run_name}.ply"
-        self.georef_json = self.output_dir / "model.georef.json"
+        self.ply_path = self.out_dir / f"{self.run_name}.ply"
+        self.georef_path = self.out_dir / "model.georef.json"
 
         self.max_gaussians = max_gaussians
-        self.save_plys = save_plys
-        self.save_checkpoints = save_checkpoints
-        self.save_metrics = save_metrics
+        self.write_intermediate_plys = write_intermediate_plys
+        self.write_checkpoints = write_checkpoints
+        self.write_metrics = write_metrics
 
-        self.deletion_opacity_threshold = deletion_opacity_threshold
-        self.opacity_regularization = opacity_regularization
-        self.scale_regularization = scale_regularization
+        self.prune_opacity_min = prune_opacity_min
+        self.opacity_reg_weight = opacity_reg_weight
+        self.scale_reg_weight = scale_reg_weight
         self.sh_degree = sh_degree
         self.optimizer_type = optimizer_type
 
-        self.scene = scene.scene
-        self.transform_matrix = scene.scene.transformation_matrix
-        self.normalization_type = scene.normalization_type
+        self.sfm_scene = colmap_scene.scene
+        self.world_transform = colmap_scene.scene.transformation_matrix
+        self.norm_mode = colmap_scene.normalization_type
 
-        self.model: Optional[fvdb.GaussianSplat3d] = None
-        self.runner: Optional[frc.radiance_fields.GaussianSplatReconstruction] = None
+        self.splats: Optional[fvdb.GaussianSplat3d] = None
+        self.reconstruction: Optional[
+            frc.radiance_fields.GaussianSplatReconstruction
+        ] = None
 
-        # post-filtering
-        self.opacity_percentile = opacity_percentile
-        self.spatial_percentile = spatial_percentile
-        self.model_bbox_margin = model_bbox_margin
-        self.scale_min_percentile = scale_min_percentile
-        self.scale_max_percentile = scale_max_percentile
+        # cleanup settings used by clean_splats()
+        self.opacity_keep_frac = opacity_keep_frac
+        self.spatial_bounds_pct = spatial_bounds_pct
+        self.crop_margin_m = crop_margin_m
 
-    def _require_scene(self) -> None:
-        """Raise if no input scene is set."""
-        if not self.scene:
-            raise ValueError("Missing input scene")
+    def _check_scene(self) -> None:
+        """Checks that a scene is set.
 
-    def _require_model(self) -> None:
-        """Raise if the model has not been trained or loaded yet."""
-        if not self.model:
+        Raises:
+            ValueError: If no scene is set.
+        """
+        if not self.sfm_scene:
+            raise ValueError("No SfM scene set")
+
+    def _check_splats(self) -> None:
+        """Checks that a model is fitted or loaded.
+
+        Raises:
+            ValueError: If no model is available.
+        """
+        if not self.splats:
             raise ValueError(
-                "Missing 3DGS model. Train a model or load one form a checkpoint with .load_checkpoint()"
+                "No splat model available. Run .fit() or load one from a checkpoint first"
             )
 
-    def train(self) -> None:
-        """Train the 3DGS model from scratch on `self.scene`.
+    def _make_optim_cfg(self):
+        """Builds the optimizer config.
 
-        Builds a `GaussianSplatReconstruction` using the configured optimizer
-        (`self.optimizer_type`) and runs `optimize()` to completion. Sets
-        `self.model` and `self.runner` on success.
+        Returns:
+            An MCMC or original optimizer config, per `optimizer_type`.
         """
-        writer_dir = self.output_dir / "info"
-        writer_dir.mkdir(parents=True, exist_ok=True)
+        if self.optimizer_type == "mcmc":
+            return frc.radiance_fields.GaussianSplatOptimizerMCMCConfig(
+                deletion_opacity_threshold=self.prune_opacity_min,
+                max_gaussians=self.max_gaussians,
+                opacity_regularization=self.opacity_reg_weight,
+                scale_regularization=self.scale_reg_weight,
+            )
 
-        writer = frc.radiance_fields.GaussianSplatReconstructionWriter(
+        logger.info(
+            f"Original 3DGS optimizer selected; opacity_reg_weight="
+            f"{self.opacity_reg_weight} and scale_reg_weight="
+            f"{self.scale_reg_weight} will not be used."
+        )
+        return frc.radiance_fields.GaussianSplatOptimizerConfig(
+            deletion_opacity_threshold=self.prune_opacity_min,
+            max_gaussians=self.max_gaussians,
+        )
+
+    def fit(self) -> None:
+        """Trains the model on the scene; sets `splats` and `reconstruction`.
+
+        Raises:
+            ValueError: If the scene is missing or has no images.
+        """
+        self._check_scene()
+        if not self.sfm_scene.images:
+            raise ValueError("SfM scene contains no images.")
+
+        info_dir = self.out_dir / "info"
+        info_dir.mkdir(parents=True, exist_ok=True)
+
+        recon_writer = frc.radiance_fields.GaussianSplatReconstructionWriter(
             run_name=self.run_name,
-            save_path=writer_dir,
+            save_path=info_dir,
             exist_ok=True,
             config=frc.radiance_fields.GaussianSplatReconstructionWriterConfig(
-                save_checkpoints=self.save_checkpoints,
-                save_plys=self.save_plys,
-                save_metrics=self.save_metrics,
+                save_checkpoints=self.write_checkpoints,
+                save_plys=self.write_intermediate_plys,
+                save_metrics=self.write_metrics,
             ),
         )
 
-        self._require_scene()
-        if not self.scene.images:
-            raise ValueError("Input scene has no images.")
-
-        config = frc.radiance_fields.GaussianSplatReconstructionConfig(
+        recon_cfg = frc.radiance_fields.GaussianSplatReconstructionConfig(
             sh_degree=self.sh_degree,
             remove_gaussians_outside_scene_bbox=True,
             save_at_percent=[25, 50, 100],
         )
-
         if self.optimizer_type == "mcmc":
-            config.remove_gaussians_outside_scene_bbox = (
-                False  # This must be false when using the MCMC optimizer
-            )
-            optimizer_config = frc.radiance_fields.GaussianSplatOptimizerMCMCConfig(
-                deletion_opacity_threshold=self.deletion_opacity_threshold,
-                max_gaussians=self.max_gaussians,
-                opacity_regularization=self.opacity_regularization,
-                scale_regularization=self.scale_regularization,
-            )
-        else:
-            logger.info(
-                f"Using the Original 3DGS optimizer. Ignoring "
-                f"'opacity_regularization' {self.opacity_regularization} and "
-                f"'scale_regularization' {self.scale_regularization}."
-            )
-            optimizer_config = frc.radiance_fields.GaussianSplatOptimizerConfig(
-                deletion_opacity_threshold=self.deletion_opacity_threshold,
-                max_gaussians=self.max_gaussians,
-            )
+            # MCMC requires bbox-based removal to be disabled
+            recon_cfg.remove_gaussians_outside_scene_bbox = False
+        optim_cfg = self._make_optim_cfg()
 
-        if not self.runner:
-            logger.info(
-                f"Initializing reconstruction with {self.optimizer_type} optimizer"
-            )
-            self.runner = (
+        if not self.reconstruction:
+            logger.info(f"Setting up reconstruction ({self.optimizer_type} optimizer)")
+            self.reconstruction = (
                 frc.radiance_fields.GaussianSplatReconstruction.from_sfm_scene(
-                    self.scene,
-                    writer=writer,
-                    config=config,
-                    optimizer_config=optimizer_config,
+                    self.sfm_scene,
+                    writer=recon_writer,
+                    config=recon_cfg,
+                    optimizer_config=optim_cfg,
                 )
             )
 
-        logger.info("Starting training...")
-        self.runner.optimize()
+        logger.info("Optimization started")
+        self.reconstruction.optimize()
 
-        self.model = self.runner.model
+        self.splats = self.reconstruction.model
         logger.info(
-            f"Training complete: {self.model.num_gaussians:,} gaussians, "
-            f"device={self.model.device}"
+            f"Optimization finished: {self.splats.num_gaussians:,} gaussians "
+            f"on {self.splats.device}"
         )
 
-    def filter_model(self) -> None:
-        """Remove floaters and outliers from the trained model."""
+    def clean_splats(self) -> None:
+        """Removes floaters via bounding-box crop and opacity filter.
 
-        self._require_scene()
-        self._require_model()
-        before = self.model.num_gaussians
-        logger.info(f"Filtering: starting with {before:,} gaussians")
+        Raises:
+            ValueError: If the scene or model is missing.
+        """
 
-        decimate = 4
+        self._check_scene()
+        self._check_splats()
+        n_start = self.splats.num_gaussians
+        logger.info(f"Cleanup: {n_start:,} gaussians before filtering")
 
-        pts = self.scene.points
-        lo = torch.tensor(
-            pts.min(axis=0) - self.model_bbox_margin,
-            dtype=self.model.means.dtype,
-            device=self.model.device,
+        decimation = 4
+
+        scene_pts = self.sfm_scene.points
+        bbox_min, bbox_max = torch.tensor(
+            np.stack(
+                [
+                    scene_pts.min(axis=0) - self.crop_margin_m,
+                    scene_pts.max(axis=0) + self.crop_margin_m,
+                ]
+            ),
+            dtype=self.splats.means.dtype,
+            device=self.splats.device,
         )
-        hi = torch.tensor(
-            pts.max(axis=0) + self.model_bbox_margin,
-            dtype=self.model.means.dtype,
-            device=self.model.device,
-        )
-        mask = ((self.model.means >= lo) & (self.model.means <= hi)).all(dim=1)
-        self.model = self.model[mask]
+        inside = (
+            (self.splats.means >= bbox_min) & (self.splats.means <= bbox_max)
+        ).all(dim=1)
+        self.splats = self.splats[inside]
         logger.info(
-            f"After bbox crop (margin={self.model_bbox_margin}m): "
-            f"{self.model.num_gaussians:,} gaussians"
+            f"Bounding-box crop (margin {self.crop_margin_m}m) left "
+            f"{self.splats.num_gaussians:,} gaussians"
         )
 
-        self.model = frc.tools.filter_splats_by_mean_percentile(
-            self.model,
-            percentile=self.spatial_percentile,
-            decimate=decimate,
+        self.splats = frc.tools.filter_splats_by_opacity_percentile(
+            self.splats, percentile=self.opacity_keep_frac, decimate=decimation
         )
-        logger.info(f"After spatial filter: {self.model.num_gaussians:,} gaussians")
+        logger.info(f"Opacity filter left {self.splats.num_gaussians:,} gaussians")
 
-        self.model = frc.tools.filter_splats_by_opacity_percentile(
-            self.model, percentile=self.opacity_percentile, decimate=decimate
-        )
-        logger.info(f"After opacity filter: {self.model.num_gaussians:,} gaussians")
-
-        scales_max = self.model.scales.amax(dim=-1)  # (N,) activated, meters
-        sample = scales_max[::decimate]
-        hi_scale = torch.quantile(sample, self.scale_max_percentile).item()
-        lo_scale = torch.quantile(sample, self.scale_min_percentile).item()
-        keep = (scales_max < hi_scale) & (scales_max > lo_scale)
+        n_end = self.splats.num_gaussians
+        n_removed = n_start - n_end
         logger.info(
-            f"Scale filter: keeping ({lo_scale:.4g}, {hi_scale:.4g}) m max-axis "
-            f"[p{self.scale_min_percentile * 100:g}, p{self.scale_max_percentile * 100:g}], "
-            f"observed max={scales_max.max().item():.4g} m"
-        )
-        self.model = self.model[keep]
-        logger.info(f"After scale filter: {self.model.num_gaussians:,} gaussians")
-
-        after = self.model.num_gaussians
-        logger.info(
-            f"Filtering complete: {after:,} remaining "
-            f"({before - after:,} removed, {100 * (before - after) / before:.1f}%)"
+            f"Cleanup done: kept {n_end:,}, dropped {n_removed:,} "
+            f"({100 * n_removed / n_start:.1f}%)"
         )
 
-    def save_ply(self) -> None:
-        """Save the 3DGS model as a PLY file in ENU space."""
+    def export_ply(self) -> None:
+        """Saves the model as a PLY to `ply_path`.
 
-        self._require_model()
-        if self.runner is not None:
-            self.runner.save_ply(str(self.model_ply))
-        else:
+        Raises:
+            ValueError: If no model is available.
+        """
+
+        self._check_splats()
+        if self.reconstruction is None:
             logger.warning(
-                "No runner available (model loaded from PLY); "
-                "saving without reconstruction metadata"
+                "Model was not produced by a reconstruction (e.g. loaded from PLY); "
+                "writing PLY without reconstruction metadata"
             )
-            self.model.save_ply(str(self.model_ply))
-        logger.info(f"Saved 3DGS PLY to {self.model_ply}")
-
-    def save_usdz(self) -> None:
-        """Save the trained model to disk as a USDZ."""
-
-        self._require_model()
-        output_model = Path(self.model_ply).with_suffix(".usdz")
-
-        if self.runner is not None:
-            self.runner.save_usd(str(output_model), usdz=True)
+            self.splats.save_ply(str(self.ply_path))
         else:
+            self.reconstruction.save_ply(str(self.ply_path))
+        logger.info(f"Wrote splat PLY: {self.ply_path}")
+
+    def export_usdz(self) -> None:
+        """Saves the model as a USDZ next to `ply_path`.
+
+        Raises:
+            ValueError: If no model is available.
+        """
+
+        self._check_splats()
+        usdz_path = Path(self.ply_path).with_suffix(".usdz")
+
+        if self.reconstruction is None:
             logger.warning(
-                "No runner available (model loaded from PLY); "
-                "exporting USDZ directly from the model"
+                "Model was not produced by a reconstruction (e.g. loaded from PLY); "
+                "exporting USDZ straight from the splats"
             )
-            frc.tools.export_splats_to_usd(self.model, str(output_model), usdz=True)
-        logger.info(f"Saved USDZ to {output_model}")
+            frc.tools.export_splats_to_usd(self.splats, str(usdz_path), usdz=True)
+        else:
+            self.reconstruction.save_usd(str(usdz_path), usdz=True)
+        logger.info(f"Wrote USDZ: {usdz_path}")

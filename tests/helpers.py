@@ -71,7 +71,7 @@ def make_fake_scene(
 
 class FakeColmapScene:
     """Minimal stand-in for gaussutils.scene.ColmapScene, exposing only the
-    attributes GaussianSplatTrainer.__init__ reads from it."""
+    attributes GaussianSplatModelTrainer.__init__ reads from it."""
 
     def __init__(self, scene, normalization_type="ecef2enu"):
         self.scene = scene
